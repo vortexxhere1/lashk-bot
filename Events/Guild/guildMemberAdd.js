@@ -1,5 +1,5 @@
 const { AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const Canvas = require('canvas'); // Canvas eklendi
+const Canvas = require('canvas');
 const path = require('path');
 const fs = require('../../Utils/Core/databaseFs');
 const emojiler = require('../../Utils/Emojis/emojiler.js');
@@ -30,7 +30,6 @@ module.exports = {
       // GİRİŞ MESAJI SİSTEMİ
       const girisData = safeLoadJSON(girisDBPath);
       const guildData = girisData[member.guild.id] || {}; 
-
       const giris = guildData.giris || {};
 
       if (giris.kanal) {
@@ -50,12 +49,17 @@ module.exports = {
             }
           }
 
+          // EMOJI HATASINI ÖNLEYEN GÜVENLİ KONTROL
+          const emojiVal = (typeof emojiler.elsallama === 'string' && emojiler.elsallama.trim() !== '') 
+            ? emojiler.elsallama 
+            : '👋';
+
           const buton = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setCustomId(`selamver_${member.id}`)
               .setLabel('Selam Ver')
               .setStyle(ButtonStyle.Success)
-              .setEmoji(emojiler.elsallama || '👋')
+              .setEmoji(emojiVal)
           );
 
           let hedefBilgi = '';
@@ -67,49 +71,46 @@ module.exports = {
           }
 
           const payload = {
-            content: `${mesaj}${hedefBilgi}`,
+            content: `${mesaj} ${emojiler.girisok || '📥'} <@${member.id}> ( ${member.user.username} )${hedefBilgi}`,
             components: [buton]
           };
 
-          if (giris.resimli === 'evet') {
-            try {
-              // --- YENİ CANVAS RESİM SİSTEMİ ---
-              const canvas = Canvas.createCanvas(1280, 720);
-              const ctx = canvas.getContext('2d');
+          // --- CANVAS HOŞ GELDİN KARTI ---
+          try {
+            const canvas = Canvas.createCanvas(1280, 720);
+            const ctx = canvas.getContext('2d');
 
-              // Arka planı yükle (image_50ac7c.png dosyası aynı klasörde olmalı)
-              const background = await Canvas.loadImage(path.join(__dirname, '../../assets/giris-background.png'));
-              ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+            // Projenin kök dizinindeki assets klasöründen resmi çağırır
+            const bgPath = path.join(process.cwd(), 'assets/giris-background.png');
+            const background = await Canvas.loadImage(bgPath);
+            ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
 
-              const centerX = 350;
+            const centerX = 350;
 
-              // HOŞ GELDİN yazısı
-              ctx.font = 'bold 70px sans-serif';
-              ctx.fillStyle = '#ffffff';
-              ctx.textAlign = 'center';
-              ctx.fillText('HOŞ GELDİN!', centerX, 550);
+            // HOŞ GELDİN yazısı
+            ctx.font = 'bold 70px sans-serif';
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.fillText('HOŞ GELDİN!', centerX, 550);
 
-              // Kullanıcı adı
-              ctx.font = '45px sans-serif';
-              ctx.fillStyle = '#cccccc';
-              ctx.fillText(`@${member.user.username}`, centerX, 620);
+            // Kullanıcı adı
+            ctx.font = '45px sans-serif';
+            ctx.fillStyle = '#cccccc';
+            ctx.fillText(`@${member.user.username}`, centerX, 620);
 
-              // Profil Fotoğrafını (Avatar) yuvarlak kırpma
-              ctx.beginPath();
-              ctx.arc(centerX, 320, 125, 0, Math.PI * 2, true); 
-              ctx.closePath();
-              ctx.clip(); 
+            // Profil Fotoğrafı (Avatar)
+            ctx.beginPath();
+            ctx.arc(centerX, 320, 125, 0, Math.PI * 2, true); 
+            ctx.closePath();
+            ctx.clip(); 
 
-              const avatar = await Canvas.loadImage(member.user.displayAvatarURL({ extension: 'png', size: 256 }));
-              ctx.drawImage(avatar, centerX - 125, 320 - 125, 250, 250);
+            const avatarURL = member.user.displayAvatarURL({ extension: 'png', size: 256 });
+            const avatar = await Canvas.loadImage(avatarURL);
+            ctx.drawImage(avatar, centerX - 125, 320 - 125, 250, 250);
 
-              // Resmi Discord'a yollanacak hale getir
-              payload.files = [new AttachmentBuilder(canvas.toBuffer(), { name: 'hosgeldin.png' })];
-              payload.content = `${mesaj} ${emojiler.girisok || '📥'} <@${member.id}> ( ${member.user.username} )${hedefBilgi}`;
-              // ---------------------------------
-            } catch (err) {
-              console.error('🔴 [GİRİŞ KARTI HATASI]', err.message);
-            }
+            payload.files = [new AttachmentBuilder(canvas.toBuffer(), { name: 'hosgeldin.png' })];
+          } catch (err) {
+            console.error('🔴 [GİRİŞ KARTI HATASI]', err);
           }
 
           await kanal.send(payload).catch(err => console.error('🔴 [GİRİŞ MESAJI GÖNDERİLEMEDİ]', err.message));
