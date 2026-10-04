@@ -15,14 +15,21 @@ try {
 }
 process.prependOnceListener("exit", () => { try { closeDatabase(); } catch {} });
 
-const mongoose = require('mongoose');
+// === RENDER İÇİN SAHTE WEB SUNUCUSU (EKLENDİ) ===
+const http = require('http');
+http.createServer((req, res) => res.end('Bot aktif!')).listen(process.env.PORT || 3000, () => {
+    console.log("🌐 [WEB] Sahte web sunucusu başlatıldı (Render kapanmaması için port dinleniyor).");
+});
+// ================================================
 
-// MongoDB Atlas bağlantısı (.env veya Render environment değişkenlerinden URI'yi alır)
+/* === MONGODB İPTAL EDİLDİ ===
+const mongoose = require('mongoose');
 const mongoURI = process.env.MONGO_URI || "mongodb+srv://canisko17_db_user:oiYRDawox6U4Tr7n@cluster0.jjlgrqx.mongodb.net/?appName=Cluster0";
 
 mongoose.connect(mongoURI)
     .then(() => console.log("🟢 [VERİTABANI] MongoDB Atlas bağlantısı başarıyla kuruldu!"))
     .catch((err) => console.error("🔴 [VERİTABANI] MongoDB bağlantı hatası:", err));
+=============================== */
 
 const { Collection } = require("discord.js");
 const { createDiscordClient } = require("./Utils/Core/discordClient");
@@ -101,12 +108,12 @@ async function startBot() {
     const emojiStats = await emojiler.loadApplicationEmojis(client);
     console.log(
         `✔️ [EMOJİ] ${emojiStats.count} Application Emoji çekildi, `
-        + `${emojiStats.lookupCount} taşınabilir ad anahtarı oluşturuldu.`,
+        + `${emojiStats.lookupCount} taşınabilir ad anahtarı oluşturuldu.`
     );
     if (emojiStats.ambiguousLookupKeys.length > 0) {
         console.warn(
             `⚠️ [EMOJİ] Birden fazla emojiyi işaret ettiği için kullanılmayan adlar: `
-            + emojiStats.ambiguousLookupKeys.join(", "),
+            + emojiStats.ambiguousLookupKeys.join(", ")
         );
     }
 
@@ -124,6 +131,8 @@ async function startBot() {
     await dogumGunuZamanlayiciKur(client);
     setupStickyListeners(client);
     loadTimedRoleScheduler(client);
+    
+    // DASHBOARD KAPALI TUTULACAK
     if (getEnv("DASHBOARD_ENABLED", "false") === "true") {
         await loadDashboard(client);
     }
