@@ -1,100 +1,155 @@
-const fs = require('../Utils/Core/databaseFs').promises;
-const path = require('node:path');
+const { AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const Canvas = require('canvas');
+const path = require('path');
+const fs = require('../../Utils/Core/databaseFs');
+const emojiler = require('../../Utils/Emojis/emojiler.js');
+const { trackMemberInvite } = require('../../Utils/Membership/inviteTracker');
+const { createDmWelcomeCard } = require('../../Utils/Media/dmWelcomeCard');
 
-function connectedActive(id, values) {
-  const v = values || {};
-  switch (id) {
-    case 'automod': return Object.values(v).some(rule => rule?.enabled === true);
-    case 'starboard': return Boolean(v.enabled && v.channelId);
-    case 'modmail': return Boolean(v.enabled && v.categoryId && v.logChannelId && v.staffRoleId);
-    case 'aktif-uye': return Boolean(v.channelId && v.roleId);
-    case 'burc': return Boolean(v.kanal && v.gonderilecekBurclar?.length);
-    case 'giris-cikis': return Boolean(v.aktif && (v.giris?.kanal || v.cikis?.kanal));
-    case 'itiraf': return Boolean(v.aktif && v.itirafKanal);
-    case 'durum-rol': return Boolean(v.tag && v.rolId);
-    case 'abonelik': return Boolean(v.kanal && v.yetkili && v.rol);
-    case 'yetkili-basvuru': return Boolean(v.basvuruKanal && v.basvuruMesaj);
-    case 'oto-publish': case 'ghost-ping': case 'oto-thread': case 'sureli-mesaj': case 'alinti-rol':
-      return Boolean(v.channels?.length);
-    case 'mesaja-emoji': case 'medya-görsel': case 'medya-video':
-      return Boolean(v.channels?.some(channel => channel.enabled));
-    default:
-      if (typeof v.enabled === 'boolean') return v.enabled;
-      throw new Error('Modül için sistem durumu tanımlanmadı.');
+const girisDBPath = path.join(__dirname, '../../Database/Sunucu Yönetimi/girisCikis.json');
+const pingDBPath = path.join(__dirname, '../../Database/Güvenlik ve Moderasyon/girisPing.json');
+
+function safeLoadJSON(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return {};
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (err) {
+    console.error(`🔴 [GİRİŞ EVENT - DB HATASI] ${filePath} okunamadı`, err.message);
+    return {};
   }
 }
 
-async function readModuleStatuses(registry, guild, client) {
-  const files = new Map();
-  const read = file => {
-    if (!files.has(file)) files.set(file, fs.readFile(path.join(__dirname, '../Database', file), 'utf8')
-      .then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return {}; throw error; }));
-    return files.get(file);
-  };
-  const config = async file => (await read(file))?.[guild.id] || {};
-  const hasChannel = id => Boolean(id && guild.channels.cache.has(id));
-  const values = value => Object.values(value || {});
-  const pending = {
-    'emoji-ekle': () => guild.members.me?.permissions.has(require('discord.js').PermissionFlagsBits.ManageGuildExpressions),
-    sticky: async () => Object.entries(await read('Sunucu Yönetimi/sticky.json'))
-      .some(([id, record]) => record && (record.guildId ? record.guildId === guild.id : hasChannel(id)) && hasChannel(id)),
-    yonlendirme: async () => (await config('Sunucu Yönetimi/kanalaYonlendirme.json')).yönlendirmeler
-      ?.some(rule => hasChannel(rule.kaynakId) && hasChannel(rule.hedefId)),
-    'clan-tag': async () => values((await config('Sunucu Yönetimi/clanTag.json')).tags).some(Boolean),
-    'emoji-rol': async () => values((await config('Sunucu Yönetimi/emojiRol.json')).messages)
-      .some(message => hasChannel(message.channelId) && values(message.pairs).some(Boolean)),
-    destek: async () => {
-      const v = await config('Sunucu Yönetimi/destek.json');
-      return v.enabled !== false && hasChannel(v.supportChannel) && v.supportRole && v.categoryId;
-    },
-    'ses-panelleri': async () => {
-      const v = await config('Ses Sistemleri/sesPanelleri.json');
-      return ['uyeKanalId', 'aktifUyeKanalId', 'sestekiUyeKanalId', 'rekorKanalId', 'durumKanalId', 'takvimKanalId', 'saatKanalId'].some(key => hasChannel(v[key]));
-    },
-    'random-medya': async () => values(await config('Eğlence ve Etkileşim/randomMedia.json')).some(v => hasChannel(v?.channelId)),
-    honeypot: async () => Object.keys((await config('Güvenlik ve Moderasyon/honeypot.json')).channels || {}).some(hasChannel),
-    audit: async () => { const v = await config('Güvenlik ve Moderasyon/auditLog.json'); return v.enabled === true && hasChannel(v.channelId); },
-    'temp-voice': async () => { const v = await read('Ses Sistemleri/tempVoice.json'); return v.enabled !== false && v.guildId === guild.id && hasChannel(v.voiceChannelId); },
-    'ses-kanali': async () => hasChannel((await read('Ses Sistemleri/sesKanali.json')).aktifSesKanali),
-    boost: async () => {
-      const v = await config('Boost/boostTracking.json');
-      return (v.enabled === true && hasChannel(v.channelId)) || (v.thanks?.enabled === true && hasChannel(v.thanks.channelId));
-    },
-
-    youtube: async () => { const v = (await config('Abonelik/aboneSetup.json')).youtube || {}; return v.aktif === true && (v.webhookUrl || v.webhook) && hasChannel(v.bildirimKanal) && v.kaynakKanallar?.length; },
-    haber: async () => { const v = await config('Bildirimler ve Sosyal Medya/haberSistemi.json'); return v.enabled !== false && hasChannel(v.kanal) && v.url; },
-    'dogum-gunu': async () => { const v = await config('Üye Verileri/dogumGunleri_ayarlar.json'); return v.enabled !== false && hasChannel(v.kanalId) && v.rolId; },
-    'eski-yeni': async () => {
-      const v = await config('Üye Verileri/eskiYeniUye.json');
-      return (hasChannel(v.eskiUyeKanal) && v.eskiUyeMesaj) || (hasChannel(v.yeniUyeKanal) && v.yeniUyeMesaj);
-    },
-    anonim: async () => { const v = await config('Eğlence ve Etkileşim/anonimSohbet.json'); return hasChannel(v.channelId) && v.messageId; },
-    ani: async () => hasChannel((await config('Eğlence ve Etkileşim/aniDefteriAyar.json')).kanalId),
-    iltifat: async () => { const v = await config('Eğlence ve Etkileşim/iltifatVeri.json'); return v.status === true && hasChannel(v.channelId); },
-    oyunlar: async () => {
-      const v = await config('Eğlence ve Etkileşim/oyunKanallari.json');
-      return ['sayi', 'bom', 'kelime', 'tuttu', 'sayiTahmini', 'hizliYaz', 'adamAsmaca'].some(key => hasChannel(v[key]));
-    },
-    'bot-log': async () => { const v = await config('Sistem/botLog.json'); return v.enabled !== false && hasChannel(v.kanalId) && v.webhookURL; },
-    yedek: async () => (await registry.find(m => m.id === 'yedek').read(guild)).enabled,
-
-    yardim: () => client.isReady(),
-    genel: () => client.isReady(),
-  };
-  return Object.fromEntries(await Promise.all(registry.map(async module => {
+module.exports = {
+  name: 'guildMemberAdd',
+  async execute(member) {
     try {
-      let active;
-      if (pending[module.id]) {
-        active = await pending[module.id]();
-      } else {
-        active = connectedActive(module.id, await module.read(guild));
+      await trackMemberInvite(member).catch(err => {
+        console.warn(`⚠️ [DAVET] ${member.user.tag} için davet kaydı alınamadı`, err.message);
+      });
+
+      // GİRİŞ MESAJI SİSTEMİ
+      const girisData = safeLoadJSON(girisDBPath);
+      const guildData = girisData[member.guild.id] || {}; 
+      const giris = guildData.giris || {};
+
+      if (giris.kanal) {
+        const kanal = member.guild.channels.cache.get(giris.kanal);
+        if (kanal) {
+          let mesaj = `Sunucuya hoş geldin!`;
+          if (giris.mesaj) {
+            mesaj = giris.mesaj.replace(/{user}/g, `<@${member.id}>`);
+          }
+
+          if (giris.otoRol) {
+            const rol = member.guild.roles.cache.get(giris.otoRol);
+            if (rol) {
+              await member.roles.add(rol, 'Oto-rol sistemi aktif').catch(err =>
+                console.warn(`⚠️ [OTO ROL] ${member.user.tag} ${err.message}`)
+              );
+            }
+          }
+
+          const buton = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`selamver_${member.id}`)
+              .setLabel('Selam Ver')
+              .setStyle(ButtonStyle.Success)
+              .setEmoji(emojiler.elsallama || '👋')
+          );
+
+          let hedefBilgi = '';
+          if (giris.hedefUye && !isNaN(giris.hedefUye)) {
+            const hedef = parseInt(giris.hedefUye, 10);
+            const toplam = member.guild.memberCount;
+            const kalan = hedef - toplam;
+            hedefBilgi = `\n-# Hedef ${hedef} • Kalan ${kalan > 0 ? kalan : 0}`;
+          }
+
+          const payload = {
+            content: `${mesaj} ${emojiler.girisok || '📥'} <@${member.id}> ( ${member.user.username} )${hedefBilgi}`,
+            components: [buton]
+          };
+
+          // --- CANVAS HOŞ GELDİN KARTI (ZORUNLU) ---
+          try {
+            const canvas = Canvas.createCanvas(1280, 720);
+            const ctx = canvas.getContext('2d');
+
+            // Arka plan resmi: assets/giris-background.png
+            const bgPath = path.join(__dirname, '../../assets/giris-background.png');
+            const background = await Canvas.loadImage(bgPath);
+            ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+
+            const centerX = 350;
+
+            // HOŞ GELDİN yazısı
+            ctx.font = 'bold 70px sans-serif';
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.fillText('HOŞ GELDİN!', centerX, 550);
+
+            // Kullanıcı adı
+            ctx.font = '45px sans-serif';
+            ctx.fillStyle = '#cccccc';
+            ctx.fillText(`@${member.user.username}`, centerX, 620);
+
+            // Profil Fotoğrafı (Avatar)
+            ctx.beginPath();
+            ctx.arc(centerX, 320, 125, 0, Math.PI * 2, true); 
+            ctx.closePath();
+            ctx.clip(); 
+
+            const avatarURL = member.user.displayAvatarURL({ extension: 'png', size: 256 });
+            const avatar = await Canvas.loadImage(avatarURL);
+            ctx.drawImage(avatar, centerX - 125, 320 - 125, 250, 250);
+
+            payload.files = [new AttachmentBuilder(canvas.toBuffer(), { name: 'hosgeldin.png' })];
+          } catch (err) {
+            console.error('🔴 [GİRİŞ KARTI HATASI]', err);
+          }
+
+          await kanal.send(payload).catch(err => console.error('🔴 [GİRİŞ MESAJI GÖNDERİLEMEDİ]', err.message));
+        }
       }
-      return [module.id, Boolean(active)];
-    } catch {
 
-      return [module.id, null];
+      // DM MESAJI SİSTEMİ
+      try {
+        const imageBuffer = await createDmWelcomeCard(member);
+        const attachment = new AttachmentBuilder(imageBuffer, { name: 'hosgeldin.png' });
+        await member.send({
+            content: `${emojiler.pikachuselam || '👋'} Selam! <@${member.user.id}> Aramıza hoş geldin! \n🌺 __${member.guild.name}__ ailesine katıldığın için çok mutluyuz 🌟 \n${emojiler.redheart || '❤️'} __Güzel zaman geçirmen dileğiyle! İyi günler diliyorum!__ 🙃`,
+            files: [attachment]
+        });
+      } catch (err) {
+        console.warn(`⚠️ [DM MESAJ] DM gönderilemedi ${member.user.tag}`);
+      }
+
+      // GHOST PING SİSTEMİ
+      const pingDB = safeLoadJSON(pingDBPath);
+      const channels = pingDB[member.guild.id];
+      let tagDuration = 1000;
+      
+      if (pingDB._ayarlar && pingDB._ayarlar[member.guild.id]) {
+         const configuredTagDuration = Number(pingDB._ayarlar[member.guild.id].etiketSuresi);
+         if (Number.isFinite(configuredTagDuration) && configuredTagDuration >= 500 && configuredTagDuration <= 60000) {
+             tagDuration = Math.round(configuredTagDuration);
+         }
+      }
+
+      if (channels && Array.isArray(channels) && channels.length > 0) {
+        for (const channelId of channels) {
+          const channel = member.guild.channels.cache.get(channelId);
+          if (!channel) continue;
+          try {
+            const msg = await channel.send(`<@${member.id}>`);
+            setTimeout(() => msg.delete().catch(() => {}), tagDuration);
+          } catch (err) {
+            console.warn(`⚠️ [GHOST PING] ${channelId} ${err.message}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`🔴 [GUILD MEMBER ADD GENEL HATA] ${member?.user?.tag}`, err);
     }
-  })));
-}
-
-module.exports = { readModuleStatuses };
+  }
+};
