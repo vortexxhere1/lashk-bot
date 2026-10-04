@@ -1,0 +1,13 @@
+{
+  "1555593455852585053": {
+    "config": {
+      "enabled": false,
+      "categoryId": "1555949904512294912",
+      "logChannelId": "1555950023202701394",
+      "staffRoleId": "1555593728096473211",
+      "welcomeMessage": "Talebin yetkililere ulaştı. Bu DM üzerinden mesaj ve dosya gönderebilirsin.",
+      "closeMessage": "Destek talebin kapatıldı. Yeni bir talep için tekrar mesaj gönderebilirsin.",
+      "maxOpenTickets": 30
+    }
+  }
+}
