@@ -1,7 +1,61 @@
-const { SlashCommandBuilder, ChannelType, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, RoleSelectMenuBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ContainerBuilder, SectionBuilder, TextDisplayBuilder, MessageFlags } = require("discord.js");
-const emojiler = require("../../Utils/Emojis/emojiler.js");
+const { 
+  SlashCommandBuilder, 
+  ChannelType, 
+  PermissionFlagsBits, 
+  ActionRowBuilder, 
+  ButtonBuilder, 
+  ButtonStyle, 
+  ChannelSelectMenuBuilder, 
+  RoleSelectMenuBuilder, 
+  StringSelectMenuBuilder, 
+  ModalBuilder, 
+  TextInputBuilder, 
+  TextInputStyle, 
+  ContainerBuilder, 
+  SectionBuilder, 
+  TextDisplayBuilder, 
+  MessageFlags 
+} = require("discord.js");
 
-const { readGuildConfig, updateGuildConfig } = require("../../Dashboard/stores/girisCikis");
+// Güvenli modül require kontrolü
+function safeRequire(relativePath) {
+  try {
+    return require(relativePath);
+  } catch (err) {
+    return null;
+  }
+}
+
+const emojiler = safeRequire("../../Utils/Emojis/emojiler.js") || {};
+const store = safeRequire("../../Dashboard/stores/girisCikis") || {};
+
+// Mağaza fonksiyonları yedek koruması
+const readGuildConfig = store.readGuildConfig || ((guildId) => {
+  const fs = require("fs");
+  const path = require("path");
+  const dbPath = path.join(__dirname, "../../Database/Sunucu Yönetimi/girisCikis.json");
+  if (!fs.existsSync(dbPath)) return {};
+  try {
+    const data = JSON.parse(fs.readFileSync(dbPath, "utf-8"));
+    return data[guildId] || {};
+  } catch {
+    return {};
+  }
+});
+
+const updateGuildConfig = store.updateGuildConfig || ((guildId, updateFn) => {
+  const fs = require("fs");
+  const path = require("path");
+  const dbPath = path.join(__dirname, "../../Database/Sunucu Yönetimi/girisCikis.json");
+  let data = {};
+  if (fs.existsSync(dbPath)) {
+    try { data = JSON.parse(fs.readFileSync(dbPath, "utf-8")); } catch {}
+  }
+  if (!data[guildId]) data[guildId] = { giris: {}, cikis: {} };
+  updateFn(data[guildId]);
+  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
+  return data[guildId];
+});
 
 const PANEL_REPLY_FLAGS = MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral;
 const PANEL_UPDATE_FLAGS = MessageFlags.IsComponentsV2;
@@ -61,10 +115,18 @@ function buildSettingSection(sessionId, action, line, disabled = false) {
 }
 
 function buildPanelPayload(guild, guildId, sessionId, disabled = false, ephemeral = true) {
-  const config = readGuildConfig(guildId);
+  const config = readGuildConfig(guildId) || {};
   const giris = config.giris || {};
   const cikis = config.cikis || {};
   const enabled = isSystemEnabled(config);
+
+  const activeEmoji = emojiler?.active || "🟢";
+  const deactiveEmoji = emojiler?.deactive || "🔴";
+  const ampulEmoji = emojiler?.ampul || "💡";
+  const girisEmoji = emojiler?.girisok || "➡️";
+  const cikisEmoji = emojiler?.cikisOk || "⬅️";
+  const speechEmoji = emojiler?.speechbubble || "💬";
+  const uyeEmoji = emojiler?.uye || "👥";
 
   const header = new TextDisplayBuilder().setContent(
     [
@@ -78,13 +140,13 @@ function buildPanelPayload(guild, guildId, sessionId, disabled = false, ephemera
     .addTextDisplayComponents(header);
 
   [
-    buildSettingSection(sessionId, "status", `${enabled ? `${emojiler.active}` : `${emojiler.deactive}`} **Durum:** ${enabled ? "Açık" : "Kapalı"}`, disabled),
-    buildSettingSection(sessionId, "otoRol", `${emojiler.ampul} **Otorol:** ${roleValue(guild, giris.otoRol)}`, disabled),
-    buildSettingSection(sessionId, "girisKanal", `${emojiler.girisok} **Hoş Geldin Kanalı:** ${channelValue(guild, giris.kanal)}`, disabled),
-    buildSettingSection(sessionId, "cikisKanal", `${emojiler.cikisOk} **Güle Güle Kanalı:** ${channelValue(guild, cikis.kanal)}`, disabled),
-    buildSettingSection(sessionId, "resimli", `🖼️ **Resimli mi olsun?:** ${boolValue(giris.resimli)}`, disabled),
-    buildSettingSection(sessionId, "mesaj", `${emojiler.speechbubble} **Giriş Mesajı:** ${codeValue(giris.mesaj, DEFAULT_WELCOME_MESSAGE, 90)}`, disabled),
-    buildSettingSection(sessionId, "hedefUye", `${emojiler.uye} **Hedef Üye:** ${giris.hedefUye ? codeValue(giris.hedefUye) : "`Yok`"}`, disabled),
+    buildSettingSection(sessionId, "status", `${enabled ? activeEmoji : deactiveEmoji} **Durum:** ${enabled ? "Açık" : "Kapalı"}`, disabled),
+    buildSettingSection(sessionId, "otoRol", `${ampulEmoji} **Otorol:** ${roleValue(guild, giris.otoRol)}`, disabled),
+    buildSettingSection(sessionId, "girisKanal", `${girisEmoji} **Hoş Geldin Kanalı:** ${channelValue(guild, giris.kanal)}`, disabled),
+    buildSettingSection(sessionId, "cikisKanal", `${cikisEmoji} **Güle Güle Kanalı:** ${channelValue(guild, cikis.kanal)}`, disabled),
+    buildSettingSection(sessionId, "resimli", `🖼️ **Resimli Kart mi olsun?:** ${boolValue(giris.resimli)}`, disabled),
+    buildSettingSection(sessionId, "mesaj", `${speechEmoji} **Giriş Mesajı:** ${codeValue(giris.mesaj, DEFAULT_WELCOME_MESSAGE, 90)}`, disabled),
+    buildSettingSection(sessionId, "hedefUye", `${uyeEmoji} **Hedef Üye:** ${giris.hedefUye ? codeValue(giris.hedefUye) : "`Yok`"}`, disabled),
   ].forEach(section => container.addSectionComponents(section));
 
   return {
@@ -164,13 +226,13 @@ function resimliPrompt(sessionId) {
     .setCustomId(makeId(sessionId, "select:resimli"))
     .setPlaceholder("Resimli giriş mesajı kullanılsın mı?")
     .addOptions(
-      { label: "Evet", value: "evet" },
-      { label: "Hayır", value: "hayir" }
+      { label: "Evet (Profil Kartı Resmi)", value: "evet" },
+      { label: "Hayır (GIF'li Embed Kartı)", value: "hayir" }
     );
 
   return buildSelectPromptPayload(
     "Resimli mi olsun",
-    "Giriş mesajının görselli gönderilip gönderilmeyeceğini seç.",
+    "Giriş mesajının resimli profil kartı mı yoksa GIF'li Embed mi olacağını seç.",
     [new ActionRowBuilder().addComponents(select)]
   );
 }
@@ -229,6 +291,9 @@ module.exports = {
     const guildId = guild.id;
     const sessionId = interaction.id;
 
+    const tikEmoji = emojiler?.tik || "✅";
+    const uyariEmoji = emojiler?.uyari || "⚠️";
+
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await interaction.editReply(buildPanelPayload(guild, guildId, sessionId, false, false));
 
@@ -259,7 +324,7 @@ module.exports = {
 
       if (componentInteraction.user.id !== user.id) {
         return componentInteraction.reply(
-          buildNoticePayload("**Bu panel sana ait değil**", `${emojiler.uyari} **Bu paneli sadece komutu kullanan kişi düzenleyebilir.**`, true)
+          buildNoticePayload("**Bu panel sana ait değil**", `${uyariEmoji} **Bu paneli sadece komutu kullanan kişi düzenleyebilir.**`, true)
         ).catch(() => null);
       }
 
@@ -273,7 +338,7 @@ module.exports = {
               .then(() => componentInteraction.followUp(
                 buildNoticePayload(
                   "Durum güncellendi",
-                  `${emojiler.tik} Giriş-çıkış sistemi **${isSystemEnabled(config) ? "açıldı" : "kapatıldı"}**.`
+                  `${tikEmoji} Giriş-çıkış sistemi **${isSystemEnabled(config) ? "açıldı" : "kapatıldı"}**.`
                 )
               ));
           }
@@ -283,12 +348,12 @@ module.exports = {
           if (action === "resimli") return componentInteraction.reply(resimliPrompt(sessionId));
 
           if (action === "mesaj") {
-            const config = readGuildConfig(guildId);
+            const config = readGuildConfig(guildId) || {};
             return componentInteraction.showModal(textModal(sessionId, config.giris?.mesaj));
           }
 
           if (action === "hedefUye") {
-            const config = readGuildConfig(guildId);
+            const config = readGuildConfig(guildId) || {};
             return componentInteraction.showModal(targetModal(sessionId, config.giris?.hedefUye));
           }
 
@@ -296,6 +361,8 @@ module.exports = {
             const field = action.slice("clear:".length);
             if (!["otoRol", "girisKanal", "cikisKanal"].includes(field)) return;
             updateGuildConfig(guildId, config => {
+              if (!config.giris) config.giris = {};
+              if (!config.cikis) config.cikis = {};
               if (field === "otoRol") delete config.giris.otoRol;
               if (field === "girisKanal") delete config.giris.kanal;
               if (field === "cikisKanal") delete config.cikis.kanal;
@@ -310,7 +377,7 @@ module.exports = {
             return saveAndRefresh(
               componentInteraction,
               "Ayar sıfırlandı",
-              `${emojiler.tik} ${labels[field] || "Ayar"} **sıfırlandı**.`
+              `${tikEmoji} ${labels[field] || "Ayar"} **sıfırlandı**.`
             );
           }
         }
@@ -320,6 +387,8 @@ module.exports = {
           const selectedId = componentInteraction.values[0];
 
           updateGuildConfig(guildId, config => {
+            if (!config.giris) config.giris = {};
+            if (!config.cikis) config.cikis = {};
             if (field === "girisKanal") config.giris.kanal = selectedId;
             if (field === "cikisKanal") config.cikis.kanal = selectedId;
           });
@@ -327,7 +396,7 @@ module.exports = {
           return saveAndRefresh(
             componentInteraction,
             "Kanal güncellendi",
-            `${emojiler.tik} ${field === "girisKanal" ? "Hoş geldin" : "Güle güle"} kanalı <#${selectedId}> olarak **güncellendi**.`
+            `${tikEmoji} ${field === "girisKanal" ? "Hoş geldin" : "Güle güle"} kanalı <#${selectedId}> olarak **güncellendi**.`
           );
         }
 
@@ -335,13 +404,14 @@ module.exports = {
           const selectedId = componentInteraction.values[0];
 
           updateGuildConfig(guildId, config => {
+            if (!config.giris) config.giris = {};
             config.giris.otoRol = selectedId;
           });
 
           return saveAndRefresh(
             componentInteraction,
             "Otorol güncellendi",
-            `${emojiler.tik} Otorol <@&${selectedId}> olarak **güncellendi**.`
+            `${tikEmoji} Otorol <@&${selectedId}> olarak **güncellendi**.`
           );
         }
 
@@ -350,13 +420,14 @@ module.exports = {
           if (value !== "evet" && value !== "hayir") return;
 
           updateGuildConfig(guildId, config => {
+            if (!config.giris) config.giris = {};
             config.giris.resimli = value;
           });
 
           return saveAndRefresh(
             componentInteraction,
             "Resimli giriş güncellendi",
-            `${emojiler.tik} Resimli giriş mesajı **${value === "evet" ? "açıldı" : "kapatıldı"}**.`
+            `${tikEmoji} Resimli giriş seçeneği **${value === "evet" ? "Resimli Kart" : "GIF Embed"}** olarak **ayarlandı**.`
           );
         }
 
@@ -366,6 +437,7 @@ module.exports = {
 
           if (field === "mesaj") {
             updateGuildConfig(guildId, config => {
+              if (!config.giris) config.giris = {};
               if (!value) delete config.giris.mesaj;
               else config.giris.mesaj = value;
             });
@@ -374,8 +446,8 @@ module.exports = {
               buildNoticePayload(
                 "Giriş mesajı güncellendi",
                 value
-                  ? `${emojiler.tik} Giriş mesajı **güncellendi**.`
-                  : `${emojiler.tik} Giriş mesajı varsayılana **döndürüldü**.`
+                  ? `${tikEmoji} Giriş mesajı **güncellendi**.`
+                  : `${tikEmoji} Giriş mesajı varsayılana **döndürüldü**.`
               )
             );
             return refreshPanel(interaction, guild, guildId, sessionId);
@@ -384,11 +456,13 @@ module.exports = {
           if (field === "hedefUye") {
             if (value && (!/^\d+$/.test(value) || Number(value) < 1)) {
               return componentInteraction.reply(
-                buildNoticePayload("Geçersiz hedef üye", `${emojiler.uyari} Hedef üye sayısı pozitif bir sayı olmalı.`, true)
+                buildNoticePayload("Geçersiz hedef üye", `${uyariEmoji} Hedef üye sayısı pozitif bir sayı olmalı.`, true)
               );
             }
 
             updateGuildConfig(guildId, config => {
+              if (!config.giris) config.giris = {};
+              if (!config.cikis) config.cikis = {};
               if (!value) {
                 delete config.giris.hedefUye;
                 delete config.cikis.hedefUye;
@@ -403,8 +477,8 @@ module.exports = {
               buildNoticePayload(
                 "Hedef üye güncellendi",
                 value
-                  ? `${emojiler.tik} Hedef üye \`${Number(value)}\` olarak **güncellendi**.`
-                  : `${emojiler.tik} Hedef üye ayarı **sıfırlandı**.`
+                  ? `${tikEmoji} Hedef üye \`${Number(value)}\` olarak **güncellendi**.`
+                  : `${tikEmoji} Hedef üye ayarı **sıfırlandı**.`
               )
             );
             return refreshPanel(interaction, guild, guildId, sessionId);
@@ -412,7 +486,7 @@ module.exports = {
         }
       } catch (err) {
         console.error("🔴 [GİRİŞ-ÇIKIŞ PANEL HATASI]", err);
-        const payload = buildNoticePayload("İşlem başarısız", `${emojiler.uyari} Ayar güncellenirken hata oluştu. Konsolu kontrol et.`, true);
+        const payload = buildNoticePayload("İşlem başarısız", `${uyariEmoji} Ayar güncellenirken hata oluştu. Konsolu kontrol et.`, true);
         if (componentInteraction.replied || componentInteraction.deferred) {
           await componentInteraction.followUp(payload).catch(() => null);
         } else {
